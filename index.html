@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VR Dinosaurus Museum</title>
+<script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
+
+<script>
+// Constrain model dalam ruang lokal model
+function localBox(root) {
+    root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+    const m = new THREE.Matrix4(), box = new THREE.Box3(), part = new THREE.Box3();
+    root.traverse(function (o) {
+        if (!o.isMesh || !o.geometry) return;
+        o.frustumCulled = false;
+        let b;
+        if (o.isSkinnedMesh) { o.computeBoundingBox(); b = o.boundingBox; }
+        else { if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); b = o.geometry.boundingBox; }
+        m.multiplyMatrices(inv, o.matrixWorld);
+        part.copy(b).applyMatrix4(m);
+        box.union(part);
+    });
+    return box;
+}
+
+// length: sisi terpanjang (m) | maxh: batas tinggi (m), 0 = bebas | height: skala berdasarkan tinggi (untuk manusia)
+AFRAME.registerComponent("fit-model", {
+    schema: { length: { type: "number", default: 5 }, maxh: { type: "number", default: 0 }, height: { type: "number", default: 0 }, center: { type: "boolean", default: false } },
+    init: function () {
+        this.el.addEventListener("model-loaded", () => {
+            const root = this.el.getObject3D("mesh");
+            if (!root) return;
+            root.position.set(0, 0, 0); root.rotation.set(0, 0, 0); root.scale.set(1, 1, 1);
+            const box = localBox(root);
+            if (box.isEmpty()) return;
+            const d = this.data, size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+            let turn = 0, s;
+            if (d.height > 0) {
+                s = d.height / size.y;
+            } else {
+                turn = size.z > size.x ? Math.PI / 2 : 0;
+                s = d.length / Math.max(size.x, size.z);
+                if (d.maxh > 0) s = Math.min(s, d.maxh / size.y);
+            }
+            root.rotation.y = turn;
+            root.scale.setScalar(s);
+            c.multiplyScalar(s);
+            c.applyAxisAngle(new THREE.Vector3(0, 1, 0), turn);
+            root.position.set(-c.x, d.center ? -c.y : -box.min.y * s, -c.z);
+            this.el.emit("fitted");
+        });
+    }
+});
+
+// Label
+AFRAME.registerComponent("face-camera", {
+    init: function () { this.t = new THREE.Vector3(); },
+    tick: function () {
+        const cam = this.el.sceneEl.camera;
+        if (!cam) return;
+        cam.getWorldPosition(this.t);
+        this.el.object3D.lookAt(this.t);
+    }
+});
+</script>
+
+<style>
+body { margin: 0; }
+#infoPanel {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 70%; max-width: 620px; max-height: 70vh; overflow-y: auto; padding: 25px;
+    background: rgba(0, 0, 0, 0.92); color: white; font-family: Arial, sans-serif;
+    line-height: 1.6; border-radius: 10px; z-index: 10;
+}
+#infoPanel h2 { margin-top: 0; }
+#infoPanel h3 { margin-bottom: 5px; color: #ffd36b; }
+#infoPanel p { margin-top: 0; }
+#closeInfo { position: absolute; top: 8px; right: 15px; font-size: 28px; cursor: pointer; }
+
+/* Penampil 3D Sketchfab untuk fosil Brachiosaurus */
+#fossilPanel {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 85%; max-width: 900px; padding: 18px 18px 10px; box-sizing: border-box;
+    background: rgba(0, 0, 0, 0.94); color: white; font-family: Arial, sans-serif;
+    border-radius: 10px; z-index: 11;
+}
+#fossilPanel h2 { margin: 0 30px 10px 0; font-size: 20px; color: #ffd36b; }
+#fossilFrame { width: 100%; height: 60vh; border: 0; border-radius: 6px; background: #111; }
+#fossilPanel .credit { font-size: 13px; color: #cfd6e4; margin: 8px 0 0; }
+#fossilPanel .credit a { font-weight: bold; color: #1CAAD9; }
+#closeFossil { position: absolute; top: 8px; right: 15px; font-size: 28px; cursor: pointer; }
+</style>
+</head>
+
+<body>
+<div id="infoPanel"><span id="closeInfo">&times;</span><div id="infoContent"></div></div>
+
+<div id="fossilPanel">
+    <span id="closeFossil">&times;</span>
+    <h2>Fosil Brachiosaurus (putar dan perbesar dengan mouse)</h2>
+    <iframe id="fossilFrame" title="Brachiosaurus" frameborder="0" allowfullscreen mozallowfullscreen="true" webkitallowfullscreen="true"
+        allow="autoplay; fullscreen; xr-spatial-tracking" xr-spatial-tracking execution-while-out-of-viewport execution-while-not-rendered web-share></iframe>
+    <p class="credit">
+        <a href="https://sketchfab.com/3d-models/brachiosaurus-171fefac3f8e461f90b1c96c3770ca55" target="_blank" rel="nofollow">Brachiosaurus</a>
+        oleh <a href="https://sketchfab.com/kreanym" target="_blank" rel="nofollow">Kreanym</a>
+        di <a href="https://sketchfab.com" target="_blank" rel="nofollow">Sketchfab</a>
+    </p>
+</div>
+
+<a-scene fog="type: linear; color: #0f1320; near: 14; far: 60">
+
+    <a-sky id="sky" color="#0f1320"></a-sky>
+    <a-circle id="ground" rotation="-90 0 0" radius="80" color="#1b2132"></a-circle>
+
+    <a-light type="ambient" color="#ffffff" intensity="0.75"></a-light>
+    <a-light type="directional" color="#fff1d6" intensity="0.9" position="4 10 6"></a-light>
+
+    <!-- Quiz* -->
+    <a-entity id="room-quiz" class="room">
+        <a-plane position="0 3.6 -5.6" width="7.2" height="2.2" color="#161b27"></a-plane>
+        <a-text id="quizCount" value="" position="-3.4 4.45 -5.58" anchor="left" width="3" color="#9aa4b5"></a-text>
+        <a-text id="quizScore" value="" position="3.4 4.45 -5.58" anchor="right" width="3" color="#ffd36b"></a-text>
+        <a-text id="quizQuestion" value="" position="0 3.5 -5.58" align="center" width="6.4" wrap-count="38" color="#ffffff"></a-text>
+
+        <a-plane id="answer0" class="hit-quiz" position="-2.4 1.8 -5.2" width="2.1" height="0.9" color="#2a3142">
+            <a-text id="answerText0" value="" align="center" width="1.8" wrap-count="18" position="0 0 0.01" color="#ffffff"></a-text>
+        </a-plane>
+        <a-plane id="answer1" class="hit-quiz" position="0 1.8 -5.2" width="2.1" height="0.9" color="#2a3142">
+            <a-text id="answerText1" value="" align="center" width="1.8" wrap-count="18" position="0 0 0.01" color="#ffffff"></a-text>
+        </a-plane>
+        <a-plane id="answer2" class="hit-quiz" position="2.4 1.8 -5.2" width="2.1" height="0.9" color="#2a3142">
+            <a-text id="answerText2" value="" align="center" width="1.8" wrap-count="18" position="0 0 0.01" color="#ffffff"></a-text>
+        </a-plane>
+    </a-entity>
+
+    <!-- Nav -->
+    <a-cone id="prevButton" class="nav" position="-3.8 0.6 -4.5" rotation="0 0 90" radius-bottom="0.4" radius-top="0" height="0.8" segments-radial="3" color="#e0b24a" visible="false"></a-cone>
+    <a-cone id="nextButton" class="nav" position="3.8 0.6 -4.5" rotation="0 0 -90" radius-bottom="0.4" radius-top="0" height="0.8" segments-radial="3" color="#e0b24a"></a-cone>
+
+    <a-plane id="homeButton" class="nav" position="0 0.5 -4.2" width="1.3" height="0.4" color="#2a3142">
+        <a-text value="HOME" align="center" width="2" position="0 0 0.01" color="#ffffff"></a-text>
+    </a-plane>
+
+    <a-text id="pageLabel" value="" position="0 1.0 -4.5" align="center" width="5" color="#e8e2d0"></a-text>
+
+    <a-circle id="infoButton" class="nav" position="3.8 1.4 -4.5" radius="0.4" color="#2a3142">
+        <a-text value="i" align="center" width="3" position="0 0 0.02" color="#ffffff"></a-text>
+    </a-circle>
+
+    <!-- Button FOSIL (hanya tampil di halaman dinosaurus) -->
+    <a-plane id="fossilButton" class="fossil" position="3.8 2.9 -4.5" width="1.8" height="0.5" color="#6b4a2b" visible="false">
+        <a-text id="fossilLabel" value="LIHAT FOSIL" align="center" width="2.4" position="0 0 0.01" color="#ffffff"></a-text>
+    </a-plane>
+    <a-text id="fossilNote" value="" position="3.8 2.5 -4.5" baseline="top" align="center" width="1.9" wrap-count="26" color="#d9c9a8" visible="false"></a-text>
+
+    <!-- KAMERA -->
+    <a-entity id="cameraRig" position="0 0 0">
+        <a-camera look-controls="enabled: true; mouseEnabled: true; touchEnabled: true; pointerLockEnabled: false" wasd-controls="enabled: true">
+            <a-cursor raycaster="objects: .nav" fuse="false"></a-cursor>
+        </a-camera>
+    </a-entity>
+</a-scene>
+
+<script>
+const scene = document.querySelector("a-scene");
+
+// Konten
+const doc = (title, intro, arr) =>
+    "<h2>" + title + "</h2><p>" + intro + "</p>" + arr.map(a => "<h3>" + a[0] + "</h3><p>" + a[1] + "</p>").join("");
+const fmt = n => String(n).replace(".", ",");
+const fosilTeks = (nama, embed) =>
+    "Fosil adalah sisa atau jejak makhluk hidup purba yang terawetkan di dalam batuan. Pada tulang, mineral dari tanah perlahan menggantikan bahan aslinya selama jutaan tahun sehingga tulang itu mengeras menjadi batu. " +
+    (embed
+        ? "Tekan tombol LIHAT FOSIL untuk membuka penampil 3D rangka " + nama + ", lalu putar dan perbesar sesukamu. "
+        : "Tekan tombol LIHAT FOSIL untuk melihat rangka " + nama + ", dan tekan lagi untuk kembali ke rekonstruksi wujud hidupnya. ") +
+    "Rangka yang dipajang di museum umumnya dirakit dari tulang-tulang beberapa individu, dan bagian yang belum ditemukan dilengkapi dengan tiruan.";
+
+// Periode Geologi
+const periods = [
+    {
+        id: "triassic", name: "TRIAS", range: "252 - 201 jtl", years: 51, color: "#7a3b8f",
+        note: "Dinosaurus awal\nmuncul (~230 jtl)",
+        info: doc("Periode Trias", "Berlangsung dari 252 hingga 201 juta tahun lalu, atau sekitar 51 juta tahun.", [
+            ["Kondisi Bumi", "Pada masa ini semua daratan masih menyatu dalam satu benua raksasa bernama Pangea. Bagian tengahnya sangat panas dan kering, sedangkan daerah pesisirnya lebih lembap."],
+            ["Kehidupan", "Trias dimulai tak lama setelah kepunahan massal terbesar sepanjang sejarah Bumi, sehingga kehidupan harus pulih dari nol. Dinosaurus pertama muncul sekitar 230 juta tahun lalu. Mereka hidup berdampingan dengan kerabat buaya purba, kura-kura, dan mamalia pertama yang masih berukuran kecil."],
+            ["Akhir periode", "Sekitar 201 juta tahun lalu terjadi lagi kepunahan massal. Banyak pesaing dinosaurus ikut lenyap, dan ini membuka jalan bagi dinosaurus untuk menjadi penguasa daratan pada periode berikutnya."]])
+    },
+    {
+        id: "jurassic", name: "JURA", range: "201 - 145 jtl", years: 56, color: "#2a8fa3",
+        note: "Stegosaurus\nBrachiosaurus",
+        info: doc("Periode Jura", "Berlangsung dari 201 hingga 145 juta tahun lalu, atau sekitar 56 juta tahun.", [
+            ["Kondisi Bumi", "Pangea mulai terpecah menjadi dua bagian besar, yaitu Laurasia di utara dan Gondwana di selatan. Iklimnya hangat dan lembap, dan hutan tumbuh di banyak tempat."],
+            ["Tumbuhan", "Daratan dipenuhi pakis, sikas, ginkgo, dan pohon konifer yang tinggi. Tumbuhan berbunga dan rumput belum ada."],
+            ["Hewan", "Inilah masa kejayaan sauropoda berleher panjang seperti Brachiosaurus, serta dinosaurus berpelat seperti Stegosaurus. Menjelang akhir periode, sekitar 150 juta tahun lalu, burung pertama seperti Archaeopteryx mulai muncul."]])
+    },
+    {
+        id: "cretaceous", name: "KAPUR", range: "145 - 66 jtl", years: 79, color: "#5e9e3c",
+        note: "Triceratops\nT. rex",
+        info: doc("Periode Kapur", "Berlangsung dari 145 hingga 66 juta tahun lalu, atau sekitar 79 juta tahun. Inilah periode terpanjang di Era Mesozoikum.", [
+            ["Asal nama", "Nama \"Kapur\" berasal dari kata Latin creta yang berarti kapur, sebab pada masa ini lapisan kapur yang tebal terbentuk di dasar laut."],
+            ["Kondisi Bumi", "Benua-benua semakin menjauh satu sama lain dan permukaan laut sangat tinggi. Laut dangkal bahkan membelah Amerika Utara menjadi dua daratan. T. rex dan Triceratops hidup di daratan bagian barat."],
+            ["Kehidupan", "Tumbuhan berbunga mulai muncul dan menyebar, diikuti oleh beragam serangga baru. Dinosaurus pada masa ini sangat bervariasi, dari Triceratops yang bertanduk sampai Tyrannosaurus rex, pemangsa raksasa."]])
+    }
+];
+
+const extinctionInfo = doc("Akhir Zaman Dinosaurus", "Peristiwa ini terjadi sekitar 66 juta tahun lalu.", [
+    ["Tumbukan asteroid", "Sebuah asteroid selebar sekitar 10 km menghantam wilayah yang sekarang menjadi Semenanjung Yucatan di Meksiko. Tumbukan itu meninggalkan Kawah Chicxulub dengan diameter sekitar 180 km."],
+    ["Dampaknya", "Debu dan jelaga menutupi langit dan menghalangi sinar matahari dalam waktu lama. Tumbuhan mati, rantai makanan runtuh, dan sekitar tiga perempat spesies di Bumi punah, termasuk semua dinosaurus yang tidak bisa terbang."],
+    ["Dinosaurus yang bertahan", "Tidak semuanya lenyap. Sekelompok kecil dinosaurus berbulu berhasil selamat dan terus berevolusi, dan keturunannya kita kenal sekarang sebagai burung."]]);
+
+// All Pages
+const pages = [
+    {
+        id: "lobby", title: "Aula Timeline", sky: "#0b1020", ground: "#151b2e", fog: [14, 60],
+        info: doc("Selamat Datang di Museum Dinosaurus", "Di museum ini kamu diajak menjelajahi Era Mesozoikum, masa ketika dinosaurus menguasai daratan. Mulailah dari Aula Timeline ini, lalu ikuti panah untuk bertemu empat dinosaurus yang terkenal.", [
+            ["Cara Eksplorasi", "Geser mouse (atau gerakkan ponselmu) untuk melihat sekeliling. Arahkan titik putih ke sebuah objek, lalu klik. Gunakan panah di bagian bawah untuk pindah halaman dan tombol i untuk membaca catatan halaman yang sedang dibuka. Di halaman dinosaurus, tombol LIHAT FOSIL menampilkan rangka fosilnya."],
+            ["Aula Timeline", "Tiga pilar mewakili periode Trias, Jura, dan Kapur. Makin tinggi pilarnya, makin lama periode itu berlangsung. Klik pilar untuk membaca penjelasannya. Di ujung kanan garis waktu melayang sebuah meteor yang menandai peristiwa 66 juta tahun lalu. Klik meteor itu untuk tahu bagaimana zaman dinosaurus berakhir."],
+            ["Membaca Timeline", "Angka di lantai menunjukkan batas tiap periode dalam satuan jtl (juta tahun lalu). Era Mesozoikum berlangsung dari 252 sampai 66 jtl, atau sekitar 186 juta tahun."],
+            ["Daftar Halaman", "1. Aula Timeline, 2. Stegosaurus, 3. Brachiosaurus, 4. Triceratops, 5. Tyrannosaurus rex, 6. Perbandingan Ukuran, 7. Ruang Kuis."]])
+    },
+    {
+        id: "stegosaurus", title: "Stegosaurus", model: "Assets/stegosaurus.glb", fossil: "Assets/simple_stegosaurus_skeleton.glb",
+        showLength: 7, realLength: 8, theme: "jurassic", seed: 11, sky: "#9cc7b8", ground: "#58774a", fog: [20, 75],
+        meaning: "berarti 'kadal beratap'",
+        stats: [["Periode", "Jura Akhir"], ["Hidup", "155 - 150 jtl"], ["Makanan", "Herbivora"], ["Panjang", "7 - 9 m"], ["Tinggi", "sekitar 4 m"], ["Berat", "3 - 5 ton"]],
+        info: doc("Stegosaurus", "Herbivora bertubuh besar dan bergerak lambat, dengan deretan pelat tulang di punggungnya. Namanya berarti \"kadal beratap\".", [
+            ["Masa hidup", "Jura Akhir, sekitar 155 hingga 150 juta tahun lalu."],
+            ["Tempat hidup", "Amerika Utara bagian barat. Sebagian besar fosilnya ditemukan di Formasi Morrison di Colorado, Utah, dan Wyoming, yang dulunya berupa dataran sungai dan hutan terbuka."],
+            ["Klasifikasi", "Dinosauria, Ornithischia, Thyreophora (kelompok dinosaurus berlapis baja), Stegosauridae. Ia berjalan dengan empat kaki, dan kaki belakangnya jauh lebih panjang daripada kaki depannya."],
+            ["Ukuran", "Panjangnya sekitar 7 sampai 9 meter, tingginya sekitar 4 meter sampai ujung pelat tertinggi, dan beratnya 3 sampai 5 ton."],
+            ["Pelat dan duri", "Stegosaurus memiliki sekitar 17 pelat tulang yang tersusun dalam dua baris di sepanjang punggung dan ekornya. Pelat ini kemungkinan dipakai untuk pamer dan mengenali sesama jenis, dan mungkin juga membantu mengatur suhu tubuh. Ekornya berujung empat duri yang disebut thagomizer, dan duri ini benar-benar dipakai sebagai senjata. Buktinya, pernah ditemukan tulang Allosaurus dengan luka bekas tusukan yang cocok dengan bentuk duri stegosaurus."],
+            ["Otak", "Otaknya hanya seberat sekitar 80 gram, sebesar buah jeruk nipis. Ini sangat kecil untuk hewan yang beratnya beberapa ton."],
+            ["Penemuan", "Stegosaurus diberi nama pada tahun 1877 oleh Othniel Charles Marsh berdasarkan fosil dari Colorado. Kerangka yang hampir lengkap, dijuluki Sophie, kini disimpan di Museum Sejarah Alam di London."],
+            ["Tahukah kamu?", "Stegosaurus hidup sekitar 80 juta tahun sebelum T. rex. Jadi, waktu T. rex hidup, Stegosaurus sudah menjadi fosil, dan T. rex justru lebih dekat ke zaman kita daripada ke zaman Stegosaurus."],
+            ["Tentang fosil", fosilTeks("Stegosaurus")]])
+    },
+    {
+        id: "brachiosaurus", title: "Brachiosaurus", model: "Assets/brachiosaurus.glb",
+        fossilEmbed: "https://sketchfab.com/models/171fefac3f8e461f90b1c96c3770ca55/embed",
+        showLength: 9, realLength: 20, theme: "jurassic", seed: 23, sky: "#9cc7b8", ground: "#58774a", fog: [20, 75],
+        meaning: "berarti 'kadal lengan'",
+        stats: [["Periode", "Jura Akhir"], ["Hidup", "154 - 150 jtl"], ["Makanan", "Herbivora"], ["Panjang", "18 - 22 m"], ["Tinggi", "9 - 12 m"], ["Berat", "30 - 50 ton"]],
+        info: doc("Brachiosaurus", "Sauropoda raksasa berleher panjang. Namanya berarti \"kadal lengan\" karena kaki depannya lebih panjang daripada kaki belakangnya, sehingga badannya miring ke belakang seperti jerapah.", [
+            ["Masa hidup", "Jura Akhir, sekitar 154 hingga 150 juta tahun lalu."],
+            ["Tempat hidup", "Amerika Utara bagian barat. Fosilnya ditemukan di Formasi Morrison, antara lain di Colorado dan Utah."],
+            ["Klasifikasi", "Dinosauria, Saurischia, Sauropodomorpha, Sauropoda, Brachiosauridae. Ia berjalan dengan empat kaki yang kokoh seperti pilar."],
+            ["Ukuran", "Panjangnya diperkirakan 18 sampai 22 meter, tingginya 9 sampai 12 meter saat leher ditegakkan, dan beratnya 30 sampai 50 ton. Angka ini hanya perkiraan dan bisa berbeda-beda, karena sampai sekarang belum ditemukan kerangka Brachiosaurus yang lengkap."],
+            ["Makanan", "Brachiosaurus memakan daun di bagian atas pohon konifer, sikas, dan ginkgo, yang tidak terjangkau herbivora lain. Giginya berbentuk sendok untuk merontokkan daun, dan makanan kemungkinan besar langsung ditelan tanpa dikunyah. Diperkirakan ia membutuhkan ratusan kilogram tumbuhan setiap hari."],
+            ["Tubuh", "Jantungnya harus memompa darah naik beberapa meter sampai ke kepala, sehingga para ilmuwan menduga jantungnya sangat kuat."],
+            ["Penemuan", "Fosilnya pertama kali ditemukan di Colorado pada tahun 1900 oleh Elmer Riggs, dan dideskripsikan pada tahun 1903. Kerabat dekatnya dari Afrika, yang dulu disebut Brachiosaurus brancai dan kini bernama Giraffatitan, dipajang di Berlin sebagai salah satu kerangka dinosaurus tertinggi di dunia."],
+            ["Tentang fosil", fosilTeks("Brachiosaurus", true)]])
+    },
+    {
+        id: "triceratops", title: "Triceratops", model: "Assets/triceratops.glb", fossil: "Assets/animated_triceratops_skeleton.glb",
+        showLength: 7, realLength: 8.5, theme: "cretaceous", seed: 37, sky: "#e3b283", ground: "#86714b", fog: [20, 75],
+        meaning: "berarti 'wajah bertanduk tiga'",
+        stats: [["Periode", "Kapur Akhir"], ["Hidup", "68 - 66 jtl"], ["Makanan", "Herbivora"], ["Panjang", "8 - 9 m"], ["Tinggi", "sekitar 3 m"], ["Berat", "6 - 12 ton"]],
+        info: doc("Triceratops", "Herbivora besar dengan tiga tanduk dan perisai tulang di lehernya. Namanya berarti \"wajah bertanduk tiga\".", [
+            ["Masa hidup", "Kapur Akhir, sekitar 68 hingga 66 juta tahun lalu. Triceratops termasuk dinosaurus terakhir yang hidup sebelum kepunahan massal."],
+            ["Tempat hidup", "Amerika Utara bagian barat. Fosilnya banyak ditemukan di Formasi Hell Creek (Montana dan Dakota) serta Formasi Lance di Wyoming, dan juga di beberapa tempat di Kanada."],
+            ["Klasifikasi", "Dinosauria, Ornithischia, Ceratopsia, Ceratopsidae. Ia berjalan dengan empat kaki."],
+            ["Ukuran", "Panjangnya sekitar 8 sampai 9 meter, tingginya sekitar 3 meter, dan beratnya 6 sampai 12 ton, kira-kira setara gajah besar."],
+            ["Tengkorak, tanduk, dan perisai", "Tengkoraknya bisa mencapai sekitar 2 meter, salah satu yang terbesar di antara hewan darat. Dua tanduk di atas matanya panjangnya sampai sekitar 1 meter, dan ada satu tanduk yang lebih pendek di hidung. Perisai tulang di lehernya kemungkinan dipakai untuk pamer dan mengenali sesama jenis, dan mungkin juga melindungi leher."],
+            ["Makanan", "Triceratops memotong tumbuhan yang keras, seperti pakis, sikas, dan palem, dengan paruhnya yang tajam, lalu menggilingnya dengan ratusan gigi yang tersusun rapat."],
+            ["Penemuan", "Triceratops diberi nama pada tahun 1889 oleh Othniel Charles Marsh. Tanduknya sudah ditemukan lebih dulu pada tahun 1887, dan saat itu dikira milik bison raksasa."],
+            ["Tahukah kamu?", "Triceratops hidup sezaman dengan T. rex di daerah yang sama. Beberapa tulang Triceratops memiliki bekas gigitan yang diyakini berasal dari T. rex."],
+            ["Tentang fosil", fosilTeks("Triceratops")]])
+    },
+    {
+        id: "trex", title: "Tyrannosaurus rex", model: "Assets/tyrannosaurus_rex.glb", fossil: "Assets/tyrannosaurus_rex_skeleton.glb",
+        showLength: 8, realLength: 12, theme: "cretaceous", seed: 41, sky: "#e3b283", ground: "#86714b", fog: [20, 75],
+        meaning: "berarti 'raja kadal tiran'",
+        stats: [["Periode", "Kapur Akhir"], ["Hidup", "68 - 66 jtl"], ["Makanan", "Karnivora"], ["Panjang", "sekitar 12 m"], ["Tinggi", "3,7 m (pinggul)"], ["Berat", "sekitar 8 ton"]],
+        info: doc("Tyrannosaurus rex", "Salah satu dinosaurus pemakan daging terbesar, dan mungkin yang paling terkenal. Namanya berarti \"raja kadal tiran\".", [
+            ["Masa hidup", "Kapur Akhir, sekitar 68 hingga 66 juta tahun lalu, hingga menjelang kepunahan massal."],
+            ["Tempat hidup", "Amerika Utara bagian barat, yang saat itu berupa pulau besar bernama Laramidia. Fosilnya ditemukan di Montana, Dakota Selatan, Wyoming, dan Saskatchewan di Kanada."],
+            ["Klasifikasi", "Dinosauria, Saurischia, Theropoda, Tyrannosauridae. Ia berjalan dengan dua kaki, dan ekornya yang panjang dan berat berfungsi sebagai penyeimbang."],
+            ["Ukuran", "Panjangnya sekitar 12 meter, tinggi pinggulnya sekitar 3,7 meter, dan beratnya sekitar 8 ton. Angkanya sedikit berbeda dari satu spesimen ke spesimen lain."],
+            ["Cara berburu dan ciri tubuh", "Tengkoraknya sekitar 1,5 meter, dengan gigi tebal yang panjangnya sampai sekitar 30 sentimeter jika akarnya dihitung. Gigitannya termasuk yang terkuat di antara hewan darat. Lengannya kecil, hanya sekitar 1 meter, tetapi tetap berotot kuat. Penciumannya tajam dan matanya menghadap ke depan. Para ilmuwan sepakat bahwa T. rex adalah pemburu sekaligus pemakan bangkai."],
+            ["Pertumbuhan", "Semasa remaja, T. rex tumbuh sangat cepat, sekitar 2 kg per hari. Sebagian besar T. rex dewasa yang pernah ditemukan mati pada usia akhir dua puluhan."],
+            ["Penemuan", "T. rex diberi nama pada tahun 1905 oleh Henry Fairfield Osborn dari fosil yang ditemukan Barnum Brown. Spesimen bernama Sue, yang ditemukan di Dakota Selatan pada tahun 1990, termasuk yang paling lengkap dan kini disimpan di Field Museum, Chicago."],
+            ["Tahukah kamu?", "T. rex hidup sekitar 66 juta tahun lalu, tetapi Stegosaurus sudah hidup sekitar 80 juta tahun sebelum T. rex."],
+            ["Tentang fosil", fosilTeks("T. rex")]])
+    },
+    {
+        id: "size", title: "Perbandingan Ukuran", walk: true, sky: "#2b3350", ground: "#3b4256", fog: [30, 90],
+        info: doc("Perbandingan Ukuran", "Keempat dinosaurus berdiri membentuk setengah lingkaran di sekelilingmu dengan panjang yang sebenarnya. Sosok manusia dewasa dan penggaris di depan membantumu membayangkan skalanya.", [
+            ["Panjang yang dipakai", "Stegosaurus 8 m, Brachiosaurus 20 m, Triceratops 8,5 m, dan Tyrannosaurus rex 12 m. Angka ini dibulatkan dari perkiraan yang umum dipakai."],
+            ["Berkeliling", "Di halaman ini kamu bisa berjalan dengan tombol W A S D dan melihat sekeliling dengan mouse. Dinosaurusnya berdiri cukup jauh dari titik tengah, jadi berbaliklah dan berjalan mendekat supaya terlihat lebih jelas."]])
+    },
+    {
+        id: "quiz", title: "Ruang Kuis", sky: "#0f1320", ground: "#1b2132", fog: [14, 60],
+        info: doc("Ruang Kuis", "Ada lima pertanyaan tentang apa yang sudah kamu lihat di museum ini. Klik salah satu dari tiga jawaban. Jawaban yang benar akan berubah hijau, jawaban yang salah berubah merah, lalu jawaban yang tepat ditunjukkan.", [
+            ["Tips", "Kalau ragu, kembalilah ke Aula Linimasa atau halaman dinosaurus dan baca lagi infonya. Kuis ini boleh diulang sebanyak yang kamu mau."]])
+    }
+];
+
+const quiz = [
+    { q: "Sekitar berapa lama waktu berlalu sejak dinosaurus non-unggas punah?", options: ["6 juta tahun lalu", "66 juta tahun lalu", "250 juta tahun lalu"], answer: 1 },
+    { q: "Periode geologi manakah yang berlangsung paling lama?", options: ["Kapur", "Trias", "Jura"], answer: 0 },
+    { q: "Apa arti nama Triceratops?", options: ["Kadal beratap", "Kadal lengan", "Wajah bertanduk tiga"], answer: 2 },
+    { q: "Dinosaurus mana di museum ini yang paling panjang?", options: ["Tyrannosaurus rex", "Brachiosaurus", "Stegosaurus"], answer: 1 },
+    { q: "Dua dinosaurus manakah yang hidup di tempat dan waktu yang sama?", options: ["T. rex dan Triceratops", "Stegosaurus dan T. rex", "Brachiosaurus dan Triceratops"], answer: 0 }
+];
+
+function seeded(seed) {
+    let s = seed;
+    return function () { s = (s * 16807) % 2147483647; return s / 2147483647; };
+}
+
+function conifer(x, z, s) {
+    return `<a-entity position="${x} 0 ${z}" scale="${s} ${s} ${s}">
+        <a-cylinder position="0 1 0" radius="0.25" height="2" color="#5a4636"></a-cylinder>
+        <a-cone position="0 3 0" radius-bottom="1.5" radius-top="0.1" height="3.2" color="#2f6b4f"></a-cone>
+        <a-cone position="0 4.6 0" radius-bottom="1.1" radius-top="0.05" height="2.6" color="#357a58"></a-cone></a-entity>`;
+}
+
+function roundTree(x, z, s) {
+    return `<a-entity position="${x} 0 ${z}" scale="${s} ${s} ${s}">
+        <a-cylinder position="0 1.1 0" radius="0.3" height="2.2" color="#6b4f3a"></a-cylinder>
+        <a-sphere position="0 3.2 0" radius="1.6" segments-width="10" segments-height="8" color="#6f9a3d"></a-sphere>
+        <a-sphere position="0.9 2.7 0.4" radius="1" segments-width="10" segments-height="8" color="#7aa845"></a-sphere></a-entity>`;
+}
+
+function scatterProps(page, centerZ, clearRadius) {
+    const rand = seeded(page.seed);
+    let html = "";
+    for (let i = 0; i < 46; i++) {
+        const a = rand() * Math.PI * 2, d = 13 + rand() * 24;
+        const x = Math.sin(a) * d, z = -Math.cos(a) * d, s = 0.8 + rand() * 1.1;
+        if (Math.hypot(x, z - centerZ) < clearRadius) continue;
+        html += page.theme === "jurassic" ? conifer(x, z, s) : roundTree(x, z, s);
+    }
+    for (let i = 0; i < 14; i++) {
+        const a = rand() * Math.PI * 2, d = 8 + rand() * 25;
+        const x = Math.sin(a) * d, z = -Math.cos(a) * d, r = 0.3 + rand() * 0.6;
+        if (Math.hypot(x, z - centerZ) < clearRadius) continue;
+        html += `<a-dodecahedron position="${x} ${r * 0.5} ${z}" radius="${r}" color="#7d7468"></a-dodecahedron>`;
+    }
+    return html;
+}
+
+function volcano() {
+    return `<a-cone position="-24 7 -42" radius-bottom="13" radius-top="3" height="14" color="#54433d"></a-cone>
+        <a-cylinder position="-24 14.05 -42" radius="3" height="0.2" material="shader: flat; color: #ff6a2b"></a-cylinder>
+        <a-sphere position="-24 17 -42" radius="3" color="#8a8a8a" opacity="0.5" material="transparent: true"
+            animation="property: position; to: -20 24 -42; dur: 7000; easing: linear; loop: true"></a-sphere>`;
+}
+
+function statBoard(page) {
+    let rows = "";
+    page.stats.forEach(function (row, i) {
+        const y = 0.45 - i * 0.3;
+        rows += `<a-text value="${row[0]}" position="-1.55 ${y} 0.02" anchor="left" width="3" color="#9aa4b5"></a-text>
+                 <a-text value="${row[1]}" position="-0.3 ${y} 0.02" anchor="left" width="3" color="#ffffff"></a-text>`;
+    });
+    return `<a-entity position="-3.7 2.6 -4.5" rotation="0 25 0">
+        <a-plane width="3.4" height="2.9" color="#12151f" opacity="0.92"></a-plane>
+        <a-text value="${page.title}" position="0 1.2 0.02" align="center" width="3.4" color="#ffd36b"></a-text>
+        <a-text value="${page.meaning}" position="0 0.88 0.02" align="center" width="2.8" color="#c9ced8"></a-text>
+        ${rows}
+        <a-text value="Klik dinosaurus untuk jeda / lanjut putar" position="0 -1.3 0.02" align="center" width="2.4" color="#7f8aa0"></a-text>
+    </a-entity>`;
+}
+
+function buildDinoRoom(page) {
+    const room = document.createElement("a-entity");
+    const r = page.showLength / 2 + 1, cz = -(r + 5);
+    const fit = `length: ${page.showLength}; maxh: 6.5`;
+
+    room.id = "room-" + page.id;
+    room.classList.add("room");
+    room.innerHTML = `
+        ${scatterProps(page, cz, r + 3)}
+        ${page.theme === "cretaceous" ? volcano() : ""}
+        <a-cylinder position="0 0.2 ${cz}" radius="${r}" height="0.4" color="#4a4a4a"></a-cylinder>
+        <a-cylinder position="0 0.42 ${cz}" radius="${r - 0.4}" height="0.05" color="#6a6a6a"></a-cylinder>
+        <a-entity id="${page.id}Spin" position="0 0.45 ${cz}" rotation="0 30 0"
+            animation="property: rotation; from: 0 30 0; to: 0 390 0; dur: 40000; easing: linear; loop: true">
+            <a-entity id="${page.id}Live" gltf-model="${page.model}" fit-model="${fit}"></a-entity>
+            ${page.fossil ? `<a-entity id="${page.id}Fossil" visible="false" gltf-model="${page.fossil}" fit-model="${fit}"></a-entity>` : ""}
+        </a-entity>
+        <a-cylinder id="${page.id}Hit" class="hit-${page.id}" position="0 2 ${cz}" radius="${page.showLength / 4}" height="4" material="opacity: 0; transparent: true"></a-cylinder>
+        ${statBoard(page)}`;
+    scene.appendChild(room);
+
+    document.querySelector("#" + page.id + "Hit").addEventListener("click", function () {
+        const spin = document.querySelector("#" + page.id + "Spin");
+        spin.setAttribute("animation", "enabled", !spin.getAttribute("animation").enabled);
+    });
+}
+
+function buildLobby() {
+    const room = document.createElement("a-entity");
+    const rand = seeded(7);
+    room.id = "room-lobby";
+    room.classList.add("room");
+
+    let html = `
+        <a-text value="ERA MESOZOIKUM" position="0 6.3 -6.4" align="center" width="12" color="#f2e3b3"></a-text>
+        <a-text value="Zaman Para Dinosaurus  |  252 - 66 juta tahun lalu" position="0 5.65 -6.4" align="center" width="6.4" color="#aeb6c6"></a-text>
+        <a-text value="Klik pilar untuk membaca tiap periode (jtl = juta tahun lalu)" position="0 5.1 -6.4" align="center" width="5" color="#7f8aa0"></a-text>
+
+        <a-circle position="0 0.012 -6" rotation="-90 0 0" radius="6.6" color="#1f2744"></a-circle>
+        <a-ring position="0 0.02 -6" rotation="-90 0 0" radius-inner="6.6" radius-outer="6.75" color="#f2e3b3" opacity="0.6" material="transparent: true; shader: flat"></a-ring>
+        <a-ring position="0 0.02 -6" rotation="-90 0 0" radius-inner="4.6" radius-outer="4.65" color="#f2e3b3" opacity="0.25" material="transparent: true; shader: flat"></a-ring>`;
+
+    // bintang
+    for (let i = 0; i < 90; i++) {
+        const a = rand() * Math.PI * 2, e = 0.15 + rand() * 1.2, d = 45;
+        const x = Math.sin(a) * Math.cos(e) * d, y = Math.sin(e) * d, z = -Math.cos(a) * Math.cos(e) * d;
+        html += `<a-sphere position="${x} ${y} ${z}" radius="${0.08 + rand() * 0.12}" material="shader: flat; color: #ffffff"
+            animation="property: scale; to: 0.4 0.4 0.4; dir: alternate; dur: ${1200 + Math.floor(rand() * 2500)}; loop: true; easing: easeInOutSine"></a-sphere>`;
+    }
+
+    // partikel melayang
+    for (let i = 0; i < 24; i++) {
+        const x = (rand() - 0.5) * 14, y = 0.5 + rand() * 4, z = -3 - rand() * 6;
+        html += `<a-sphere position="${x} ${y} ${z}" radius="0.04" material="shader: flat; color: #ffd36b; opacity: 0.7; transparent: true"
+            animation="property: position; to: ${x} ${y + 0.8} ${z}; dir: alternate; dur: ${2500 + Math.floor(rand() * 3000)}; loop: true; easing: easeInOutSine"></a-sphere>`;
+    }
+
+    // Timeline
+    periods.forEach(function (p, i) {
+        html += `<a-box position="${(i - 1) * 3.2} 0.03 -4.9" width="3.2" height="0.05" depth="0.14" color="${p.color}" material="shader: flat"></a-box>`;
+    });
+    [["252", -4.8], ["201", -1.6], ["145", 1.6], ["66", 4.8]].forEach(function (t) {
+        html += `<a-box position="${t[1]} 0.15 -4.9" width="0.05" height="0.25" depth="0.05" color="#f2e3b3"></a-box>
+                 <a-text value="${t[0]} jtl" position="${t[1]} 0.38 -4.85" align="center" width="2" color="#f2e3b3"></a-text>`;
+    });
+
+    periods.forEach(function (p, i) {
+        const h = p.years * 0.05, x = (i - 1) * 3.2;
+        html += `
+            <a-light type="point" color="${p.color}" intensity="0.9" distance="7" position="${x} ${h + 1.2} -4.6"></a-light>
+            <a-box id="${p.id}Pillar" class="hit-lobby" position="${x} ${h / 2} -6" width="1.5" height="${h}" depth="1.5" color="${p.color}">
+                <a-text value="${p.name}" position="0 ${h / 2 - 0.35} 0.77" align="center" width="3" color="#ffffff"></a-text>
+                <a-text value="${p.range}" position="0 ${h / 2 - 0.75} 0.77" align="center" width="2.4" color="#f1f1f1"></a-text>
+                <a-text value="${p.years} juta tahun" position="0 ${h / 2 - 1.05} 0.77" align="center" width="2.2" color="#f1f1f1"></a-text>
+                <a-text value="${p.note}" position="0 ${-h / 2 + 0.55} 0.77" align="center" width="2.2" color="#ffe9a8"></a-text>
+            </a-box>
+            <a-box position="${x} ${h + 0.05} -6" width="1.7" height="0.1" depth="1.7" color="#f2e3b3"></a-box>
+            <a-torus position="${x} ${h + 0.45} -6" rotation="90 0 0" radius="0.7" radius-tubular="0.025" color="${p.color}" material="shader: flat"
+                animation="property: position; to: ${x} ${h + 0.75} -6; dir: alternate; dur: 1800; loop: true; easing: easeInOutSine"></a-torus>`;
+    });
+
+    // Hujan meteor kecil di sky
+    for (let i = 0; i < 5; i++) {
+        const x = -14 + rand() * 28, y = 14 + rand() * 7, dur = 2200 + Math.floor(rand() * 2600), delay = Math.floor(rand() * 5000);
+        html += `<a-box position="${x} ${y} -24" rotation="0 0 35" width="2.4" height="0.04" depth="0.04" material="shader: flat; color: #ffe9a8; opacity: 0.85; transparent: true"
+            animation="property: position; to: ${x - 12} ${y - 8.5} -24; dur: ${dur}; delay: ${delay}; loop: true; easing: easeInQuad"></a-box>`;
+    }
+
+    // Meteor besar di tengah
+    html += `
+        <a-entity id="meteorGroup" position="5.6 3.1 -6.2">
+            <a-sphere id="meteorFallback" radius="0.45" material="shader: flat; color: #ff4a1c"></a-sphere>
+            <a-entity animation="property: position; to: 0 0.35 0; dir: alternate; dur: 2200; loop: true; easing: easeInOutSine">
+                <a-entity animation="property: rotation; from: 0 0 0; to: 360 360 0; dur: 26000; loop: true; easing: linear">
+                    <a-entity id="meteorModel" gltf-model="Assets/meteor.glb" fit-model="length: 1.6; center: true"></a-entity>
+                </a-entity>
+            </a-entity>
+            <a-sphere radius="1" material="shader: flat; color: #ff6a2b; opacity: 0.14; transparent: true"
+                animation="property: scale; from: 1 1 1; to: 1.25 1.25 1.25; dir: alternate; dur: 1100; loop: true"></a-sphere>
+            <a-sphere position="0.8 0.5 -0.3" radius="0.28" material="shader: flat; color: #ff8a3d; opacity: 0.35; transparent: true"></a-sphere>
+            <a-sphere position="1.3 0.85 -0.5" radius="0.2" material="shader: flat; color: #ff8a3d; opacity: 0.22; transparent: true"></a-sphere>
+            <a-sphere position="1.7 1.15 -0.7" radius="0.12" material="shader: flat; color: #ff8a3d; opacity: 0.12; transparent: true"></a-sphere>
+            <a-light type="point" color="#ff6a2b" intensity="1" distance="6" position="0 0 1.5"></a-light>
+            <a-text value="66 jtl: kepunahan" position="0 1.4 0" align="center" width="2.8" color="#ff9a7a"></a-text>
+            <a-text value="(klik meteor)" position="0 -1.3 0" align="center" width="2.2" color="#c9ced8"></a-text>
+            <a-sphere id="impactBall" class="hit-lobby" radius="1.1" material="opacity: 0; transparent: true"></a-sphere>
+        </a-entity>`;
+
+    room.innerHTML = html;
+    scene.appendChild(room);
+
+    periods.forEach(function (p) {
+        document.querySelector("#" + p.id + "Pillar").addEventListener("click", function () { showInfo(p.info); });
+    });
+    document.querySelector("#impactBall").addEventListener("click", function () { showInfo(extinctionInfo); });
+    document.querySelector("#meteorModel").addEventListener("fitted", function () {
+        document.querySelector("#meteorFallback").setAttribute("visible", false);
+    });
+}
+
+function buildSizeRoom() {
+    const room = document.createElement("a-entity");
+    const R = 22;
+    const dinos = pages.filter(function (p) { return p.model; });
+    let angle = -82;
+
+    room.id = "room-size";
+    room.classList.add("room");
+
+    let html = `
+        <a-text value="PERBANDINGAN UKURAN" position="0 4 -7" align="center" width="9" color="#f2e3b3"></a-text>
+        <a-text value="Real-time Size*." position="0 3.4 -7" align="center" width="5" color="#aeb6c6"></a-text>
+
+        <a-ring position="0 0.02 0" rotation="-90 0 0" radius-inner="${R - 0.1}" radius-outer="${R + 0.1}" color="#ffffff" opacity="0.25" material="transparent: true"></a-ring>
+
+        <a-entity position="-6.5 0 -6">
+            <a-entity id="humanFallback">
+                <a-cylinder position="0 0.42 0" radius="0.13" height="0.84" color="#4a5a7a"></a-cylinder>
+                <a-box position="0 1.14 0" width="0.45" height="0.6" depth="0.22" color="#c9704f"></a-box>
+                <a-sphere position="0 1.58 0" radius="0.12" color="#e2c2a0"></a-sphere>
+            </a-entity>
+            <a-entity id="humanModel" gltf-model="Assets/smart_casual_studio_portrait.glb" fit-model="height: 1.7"></a-entity>
+            <a-text face-camera value="Manusia Dewasa\n1,7 m" position="0 2.3 0" align="center" width="3" color="#ffffff"></a-text>
+        </a-entity>`;
+
+    // Penggaris 10m
+    for (let i = 0; i < 10; i++) {
+        html += `<a-box position="${-4.5 + i} 0.03 -6" width="1" height="0.06" depth="0.25" color="${i % 2 ? "#3b4254" : "#f2e3b3"}"></a-box>`;
+    }
+    [["0 m", -5], ["5 m", 0], ["10 m", 5]].forEach(function (t) {
+        html += `<a-text value="${t[0]}" position="${t[1]} 0.35 -6" align="center" width="2" color="#f2e3b3"></a-text>`;
+    });
+
+    dinos.forEach(function (p) {
+        const span = (p.realLength / R) * 57.2958;
+        const mid = angle + span / 2, rad = mid * Math.PI / 180;
+        const x = Math.sin(rad) * R, z = -Math.cos(rad) * R;
+        html += `
+            <a-entity position="${x} 0 ${z}" rotation="0 ${-mid} 0">
+                <a-entity gltf-model="${p.model}" fit-model="length: ${p.realLength}"></a-entity>
+            </a-entity>
+            <a-text face-camera value="${p.title}\n${fmt(p.realLength)} m" position="${x} ${p.realLength * 0.3 + 2.5} ${z}" align="center" width="14" color="#ffe9a8"></a-text>`;
+        angle += span + 12;
+    });
+
+    room.innerHTML = html;
+    scene.appendChild(room);
+
+    document.querySelector("#humanModel").addEventListener("fitted", function () {
+        document.querySelector("#humanFallback").setAttribute("visible", false);
+    });
+}
+
+pages.filter(function (p) { return p.model; }).forEach(buildDinoRoom);
+buildLobby();
+buildSizeRoom();
+
+// Page Settings
+const sky = document.querySelector("#sky");
+const ground = document.querySelector("#ground");
+const cursor = document.querySelector("a-cursor");
+const camera = document.querySelector("a-camera");
+
+const infoButton = document.querySelector("#infoButton");
+const nextButton = document.querySelector("#nextButton");
+const prevButton = document.querySelector("#prevButton");
+const homeButton = document.querySelector("#homeButton");
+const pageLabel = document.querySelector("#pageLabel");
+const fossilButton = document.querySelector("#fossilButton");
+const fossilLabel = document.querySelector("#fossilLabel");
+const fossilNote = document.querySelector("#fossilNote");
+
+const infoPanel = document.querySelector("#infoPanel");
+const infoContent = document.querySelector("#infoContent");
+const closeInfo = document.querySelector("#closeInfo");
+
+const fossilPanel = document.querySelector("#fossilPanel");
+const fossilFrame = document.querySelector("#fossilFrame");
+const closeFossil = document.querySelector("#closeFossil");
+
+let currentScene = 0;
+let fossilOn = false;
+
+function showInfo(html) {
+    infoContent.innerHTML = html;
+    infoPanel.style.display = "block";
+}
+
+// Fosil Brachiosaurus: dibuka lewat penampil Sketchfab (iframe), loaded hanya saat dibutuhkan
+function showFossilEmbed(page) {
+    fossilFrame.setAttribute("src", page.fossilEmbed);
+    fossilPanel.style.display = "block";
+}
+function hideFossilEmbed() {
+    fossilPanel.style.display = "none";
+    fossilFrame.removeAttribute("src");
+}
+
+function hideInfo() {
+    infoPanel.style.display = "none";
+    hideFossilEmbed();
+}
+
+function updateFossil() {
+    const p = pages[currentScene];
+    if (!p.model) return;
+
+    const live = document.querySelector("#" + p.id + "Live");
+    const fos = document.querySelector("#" + p.id + "Fossil");
+
+    if (fos) {
+        live.setAttribute("visible", !fossilOn);
+        fos.setAttribute("visible", fossilOn);
+    }
+
+    if (p.fossilEmbed) {
+        fossilLabel.setAttribute("value", "LIHAT FOSIL");
+        fossilNote.setAttribute("value", "Fosil dibuka lewat penampil 3D Sketchfab.");
+        return;
+    }
+
+    fossilLabel.setAttribute("value", fossilOn ? "LIHAT REKONSTRUKSI" : "LIHAT FOSIL");
+    fossilNote.setAttribute("value", fossilOn
+        ? "Rangka fosil: sisa makhluk purba yang tulangnya telah membatu."
+        : "Rekonstruksi wujud hidup berdasarkan penelitian.");
+}
+
+function changeScene(index) {
+    const page = pages[index];
+    currentScene = index;
+
+    fossilOn = false;
+    pages.filter(function (p) { return p.model; }).forEach(function (p) {
+        document.querySelector("#" + p.id + "Live").setAttribute("visible", true);
+        const fos = document.querySelector("#" + p.id + "Fossil");
+        if (fos) fos.setAttribute("visible", false);
+    });
+
+    document.querySelectorAll(".room").forEach(function (room) {
+        room.setAttribute("visible", room.id === "room-" + page.id);
+    });
+
+    sky.setAttribute("color", page.sky);
+    ground.setAttribute("color", page.ground);
+    scene.setAttribute("fog", { type: "linear", color: page.sky, near: page.fog[0], far: page.fog[1] });
+
+    pageLabel.setAttribute("value", (index + 1) + " / " + pages.length + "   " + page.title);
+    prevButton.setAttribute("visible", currentScene > 0);
+    nextButton.setAttribute("visible", currentScene < pages.length - 1);
+
+    fossilButton.setAttribute("visible", !!page.model);
+    fossilNote.setAttribute("visible", !!page.model);
+    updateFossil();
+
+    cursor.setAttribute("raycaster", "objects", ".nav, .hit-" + page.id + (page.model ? ", .fossil" : ""));
+
+    camera.object3D.position.x = 0;
+    camera.object3D.position.z = 0;
+
+    hideInfo();
+    if (page.id === "quiz") startQuiz();
+}
+
+infoButton.addEventListener("click", function () { showInfo(pages[currentScene].info); });
+closeInfo.addEventListener("click", hideInfo);
+closeFossil.addEventListener("click", hideFossilEmbed);
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") hideInfo(); });
+infoPanel.addEventListener("click", function (e) { if (e.target === infoPanel) hideInfo(); });
+
+nextButton.addEventListener("click", function () { if (currentScene < pages.length - 1) changeScene(currentScene + 1); });
+prevButton.addEventListener("click", function () { if (currentScene > 0) changeScene(currentScene - 1); });
+homeButton.addEventListener("click", function () { changeScene(0); });
+fossilButton.addEventListener("click", function () {
+    const p = pages[currentScene];
+    if (p.fossilEmbed) { showFossilEmbed(p); return; }
+    fossilOn = !fossilOn;
+    updateFossil();
+});
+
+// Animasi hover 
+function addFx(el, base, hover) {
+    el.setAttribute("animation__in", "property: scale; to: 1.18 1.18 1.18; startEvents: mouseenter; dur: 160; easing: easeOutQuad");
+    el.setAttribute("animation__out", "property: scale; to: 1 1 1; startEvents: mouseleave; dur: 160; easing: easeOutQuad");
+    el.setAttribute("animation__colin", "property: material.color; type: color; to: " + hover + "; startEvents: mouseenter; dur: 160");
+    el.setAttribute("animation__colout", "property: material.color; type: color; to: " + base + "; startEvents: mouseleave; dur: 160");
+    el.setAttribute("animation__click", "property: scale; from: 0.8 0.8 0.8; to: 1.18 1.18 1.18; startEvents: click; dur: 260; easing: easeOutBack");
+}
+addFx(nextButton, "#e0b24a", "#ffe08a");
+addFx(prevButton, "#e0b24a", "#ffe08a");
+addFx(infoButton, "#2a3142", "#4a6fd0");
+addFx(homeButton, "#2a3142", "#3d4860");
+addFx(fossilButton, "#6b4a2b", "#9a6d3f");
+
+// Quiz
+const quizCount = document.querySelector("#quizCount");
+const quizScoreText = document.querySelector("#quizScore");
+const quizQuestion = document.querySelector("#quizQuestion");
+const answerBoxes = [0, 1, 2].map(function (i) { return document.querySelector("#answer" + i); });
+const answerTexts = [0, 1, 2].map(function (i) { return document.querySelector("#answerText" + i); });
+
+let quizIndex = 0, quizScore = 0, quizLocked = false, quizDone = false, quizRun = 0;
+
+function startQuiz() {
+    quizRun++;
+    quizIndex = 0;
+    quizScore = 0;
+    quizDone = false;
+    showQuestion();
+}
+
+function showQuestion() {
+    const item = quiz[quizIndex];
+    quizLocked = false;
+    quizCount.setAttribute("value", "Pertanyaan " + (quizIndex + 1) + " dari " + quiz.length);
+    quizScoreText.setAttribute("value", "Skor: " + quizScore);
+    quizQuestion.setAttribute("value", item.q);
+    answerBoxes.forEach(function (box, i) {
+        box.setAttribute("visible", true);
+        box.setAttribute("color", "#2a3142");
+        answerTexts[i].setAttribute("value", item.options[i]);
+    });
+}
+
+function finishQuiz() {
+    let message = "Jelajahi lagi aula-aula museum lalu coba sekali lagi.";
+    if (quizScore === quiz.length) message = "Skor sempurna! Kamu layak jadi pemandu museum ini.";
+    else if (quizScore >= 3) message = "Kerja bagus, kamu paham soal dinosaurus.";
+
+    quizDone = true;
+    quizCount.setAttribute("value", "Selesai");
+    quizScoreText.setAttribute("value", "Skor: " + quizScore);
+    quizQuestion.setAttribute("value", "Kamu benar " + quizScore + " dari " + quiz.length + ".\n" + message);
+
+    answerBoxes[0].setAttribute("visible", false);
+    answerBoxes[2].setAttribute("visible", false);
+    answerBoxes[1].setAttribute("visible", true);
+    answerBoxes[1].setAttribute("color", "#2a3142");
+    answerTexts[1].setAttribute("value", "Main lagi");
+}
+
+function chooseAnswer(i) {
+    if (quizDone) { if (i === 1) startQuiz(); return; }
+    if (quizLocked) return;
+    quizLocked = true;
+
+    const item = quiz[quizIndex], run = quizRun;
+
+    if (i === item.answer) {
+        quizScore++;
+        answerBoxes[i].setAttribute("color", "#2e7d32");
+    } else {
+        answerBoxes[i].setAttribute("color", "#b23b3b");
+        answerBoxes[item.answer].setAttribute("color", "#2e7d32");
+    }
+    quizScoreText.setAttribute("value", "Skor: " + quizScore);
+
+    setTimeout(function () {
+        if (run !== quizRun) return;
+        quizIndex++;
+        if (quizIndex < quiz.length) showQuestion(); else finishQuiz();
+    }, 1400);
+}
+
+answerBoxes.forEach(function (box, i) {
+    box.addEventListener("click", function () { chooseAnswer(i); });
+});
+
+if (scene.hasLoaded) changeScene(0);
+else scene.addEventListener("loaded", function () { changeScene(0); });
+</script>
+</body>
+</html>
